@@ -9,6 +9,11 @@ render_api_endpoint = "https://archive.sec-api.io"
 xbrl_api_endpoint = "https://api.sec-api.io/xbrl-to-json"
 extractor_api_endpoint = "https://api.sec-api.io/extractor"
 mapping_api_endpoint = "https://api.sec-api.io/mapping"
+exec_comp_api_endpoint = "https://api.sec-api.io/compensation"
+
+
+def handle_api_error(response):
+    raise Exception("API error: {} - {}".format(response.status_code, response.text))
 
 
 class QueryApi:
@@ -21,6 +26,8 @@ class QueryApi:
         self.api_endpoint = query_api_endpoint + "?token=" + api_key
 
     def get_filings(self, query):
+        response = {}
+
         # use backoff strategy to handle "too many requests" error.
         for x in range(3):
             response = requests.post(self.api_endpoint, json=query)
@@ -30,10 +37,9 @@ class QueryApi:
                 # wait 500 * (x + 1) milliseconds and try again
                 time.sleep(0.5 * (x + 1))
             else:
-                raise Exception("API error: " + response.status_code)
+                handle_api_error(response)
         else:
-            # request failed
-            raise Exception("API error")
+            handle_api_error(response)
 
 
 class FullTextSearchApi:
@@ -46,6 +52,8 @@ class FullTextSearchApi:
         self.api_endpoint = full_text_search_api_endpoint + "?token=" + api_key
 
     def get_filings(self, query):
+        response = {}
+
         # use backoff strategy to handle "too many requests" error.
         for x in range(3):
             response = requests.post(self.api_endpoint, json=query)
@@ -55,10 +63,9 @@ class FullTextSearchApi:
                 # wait 500 * (x + 1) milliseconds and try again
                 time.sleep(0.5 * (x + 1))
             else:
-                raise Exception("API error: " + response.status_code)
+                handle_api_error(response)
         else:
-            # request failed
-            raise Exception("API error")
+            handle_api_error(response)
 
 
 class RenderApi:
@@ -71,6 +78,7 @@ class RenderApi:
         self.api_endpoint = render_api_endpoint
 
     def get_filing(self, url):
+        response = {}
         filename = re.sub(r"https://www.sec.gov/Archives/edgar/data", "", url)
         _url = self.api_endpoint + filename + "?token=" + self.api_key
 
@@ -83,10 +91,9 @@ class RenderApi:
                 # wait 500 * (x + 1) milliseconds and try again
                 time.sleep(0.5 * (x + 1))
             else:
-                raise Exception("API error: " + response.status_code)
+                handle_api_error(response)
         else:
-            # request failed
-            raise Exception("API error")
+            handle_api_error(response)
 
 
 class XbrlApi:
@@ -103,6 +110,7 @@ class XbrlApi:
             raise ValueError("htm_url, xbrl_url or accession_no must be present")
 
         _url = ""
+        response = {}
 
         if len(htm_url):
             _url = self.api_endpoint + "&htm-url=" + htm_url
@@ -116,6 +124,7 @@ class XbrlApi:
         # use backoff strategy to handle "too many requests" error.
         for x in range(3):
             response = requests.get(_url)
+
             if response.status_code == 200:
                 data = json.loads(response.text)
                 return data
@@ -123,15 +132,14 @@ class XbrlApi:
                 # wait 500 * (x + 1) milliseconds and try again
                 time.sleep(0.5 * (x + 1))
             else:
-                raise Exception("API error: " + response.status_code)
+                handle_api_error(response)
         else:
-            # request failed
-            raise Exception("API error")
+            handle_api_error(response)
 
 
 class ExtractorApi:
     """
-    Base class for 10-K/10-Q item/section extractor API
+    Base class for 10-K/10-Q/8-K item/section extractor API
     """
 
     def __init__(self, api_key):
@@ -142,6 +150,7 @@ class ExtractorApi:
         if len(filing_url) == 0:
             raise ValueError("filing_url must be present")
 
+        response = {}
         _url = (
             self.api_endpoint
             + "&url="
@@ -153,18 +162,18 @@ class ExtractorApi:
         )
 
         # use backoff strategy to handle "too many requests" error.
-        for x in range(3):
+        for x in range(5):
             response = requests.get(_url)
+
             if response.status_code == 200:
                 return response.text
             elif response.status_code == 429:
                 # wait 500 * (x + 1) milliseconds and try again
                 time.sleep(0.5 * (x + 1))
             else:
-                raise Exception("API error: " + response.status_code)
+                handle_api_error(response)
         else:
-            # request failed
-            raise Exception("API error")
+            handle_api_error(response)
 
 
 class MappingApi:
@@ -192,6 +201,7 @@ class MappingApi:
         if not parameter.lower() in self.supported_parameters:
             raise ValueError("Parameter not supported")
 
+        response = {}
         _url = (
             self.api_endpoint
             + "/"
@@ -205,13 +215,59 @@ class MappingApi:
         # use backoff strategy to handle "too many requests" error.
         for x in range(3):
             response = requests.get(_url)
+
             if response.status_code == 200:
                 return response.json()
             elif response.status_code == 429:
                 # wait 500 * (x + 1) milliseconds and try again
                 time.sleep(0.5 * (x + 1))
             else:
-                raise Exception("API error: " + response.status_code)
+                handle_api_error(response)
         else:
-            # request failed
-            raise Exception("API error")
+            handle_api_error(response)
+
+
+class ExecCompApi:
+    """
+    Base class of Executive Compensation Data API
+    Documentation: https://sec-api.io/docs/executive-compensation-api
+    """
+
+    def __init__(self, api_key):
+        self.api_key = api_key
+        self.api_endpoint = exec_comp_api_endpoint
+
+    def get_data(self, parameter=""):
+        if isinstance(parameter, str):
+            http_method = "GET"
+        elif isinstance(parameter, dict):
+            http_method = "POST"
+        else:
+            raise Exception("Invalid parameter")
+
+        response = {}
+
+        # use backoff strategy to handle "too many requests" error.
+        for x in range(3):
+            if http_method == "GET":
+                _url = (
+                    self.api_endpoint
+                    + "/"
+                    + parameter.upper()
+                    + "?token="
+                    + self.api_key
+                )
+                response = requests.get(_url)
+            else:
+                _url = self.api_endpoint + "?token=" + self.api_key
+                response = requests.post(_url, json=parameter)
+
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 429:
+                # wait 500 * (x + 1) milliseconds and try again
+                time.sleep(0.5 * (x + 1))
+            else:
+                handle_api_error(response)
+        else:
+            handle_api_error(response)
